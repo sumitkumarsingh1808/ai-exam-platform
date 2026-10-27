@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { Material } from "@/lib/types";
 import pdfParse from "pdf-parse";
 
+export const maxDuration = 60;
+
 const ALLOWED_MIME_TYPES = [
   "application/pdf",
   "image/png",
@@ -11,7 +13,7 @@ const ALLOWED_MIME_TYPES = [
   "image/jpg",
   "image/webp",
 ];
-const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
+const MAX_FILE_SIZE = 4.5 * 1024 * 1024; // 4.5MB for Vercel Serverless payload limit
 
 export async function POST(req: NextRequest) {
   try {

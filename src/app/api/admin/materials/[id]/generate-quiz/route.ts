@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { generateQuizWithGemini } from "@/lib/gemini";
 import { aiGenerationConfigSchema } from "@/lib/validation";
 
+export const maxDuration = 60;
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }

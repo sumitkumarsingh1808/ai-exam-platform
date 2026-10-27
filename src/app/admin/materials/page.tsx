@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import Link from "next/link";
+import { safeParseJson } from "@/lib/api-client";
 
 export default function MaterialsPage() {
   const [materials, setMaterials] = useState<any[]>([]);
@@ -47,6 +48,13 @@ export default function MaterialsPage() {
     e.preventDefault();
     if (!selectedFile) return;
 
+    if (selectedFile.size > 4.2 * 1024 * 1024) {
+      setError(
+        `"${selectedFile.name}" is ${(selectedFile.size / (1024 * 1024)).toFixed(1)}MB. Cloud hosting limits uploads to 4.2MB. Please select a smaller file under 4.2MB.`
+      );
+      return;
+    }
+
     setError(null);
     setUploading(true);
 
@@ -59,8 +67,8 @@ export default function MaterialsPage() {
         body: formData,
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Upload failed");
+      const parsed = await safeParseJson(res);
+      if (!parsed.ok) throw new Error(parsed.error || "Upload failed");
 
       setSelectedFile(null);
       loadMaterials();
@@ -99,7 +107,7 @@ export default function MaterialsPage() {
               Select or Drop Syllabus File to Upload
             </p>
             <p className="text-xs text-slate-500 mt-1">
-              Supported formats: PDF, PNG, JPG, JPEG, WebP (Max 15MB)
+              Supported formats: PDF, PNG, JPG, JPEG, WebP (Max 4.2MB for cloud upload)
             </p>
 
             <input
@@ -107,7 +115,18 @@ export default function MaterialsPage() {
               id="material-file"
               accept=".pdf,image/png,image/jpeg,image/jpg,image/webp"
               onChange={(e) => {
-                if (e.target.files?.[0]) setSelectedFile(e.target.files[0]);
+                const file = e.target.files?.[0];
+                if (!file) return;
+                if (file.size > 4.2 * 1024 * 1024) {
+                  setError(
+                    `"${file.name}" is ${(file.size / (1024 * 1024)).toFixed(1)}MB. Cloud hosting limits uploads to 4.2MB. Please select a smaller file under 4.2MB.`
+                  );
+                  setSelectedFile(null);
+                  e.target.value = "";
+                  return;
+                }
+                setError(null);
+                setSelectedFile(file);
               }}
               className="hidden"
             />

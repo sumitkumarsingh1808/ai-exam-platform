@@ -3,6 +3,8 @@ import { getAdminSession } from "@/lib/auth";
 import { generateQuizWithGemini } from "@/lib/gemini";
 import pdfParse from "pdf-parse";
 
+export const maxDuration = 60; // Allow up to 60s for AI question generation on Vercel
+
 export async function POST(req: NextRequest) {
   try {
     const admin = await getAdminSession(req);
@@ -42,12 +44,22 @@ export async function POST(req: NextRequest) {
 
       if (file) {
         const buffer = Buffer.from(await file.arrayBuffer());
-        if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+        if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
           try {
             const parsed = await pdfParse(buffer);
-            content = parsed.text || textNotes;
+            const extracted = parsed.text ? parsed.text.trim() : "";
+            if (extracted.length > 50) {
+              content = extracted;
+            } else {
+              // Scanned document without embedded text layer: pass directly to Gemini vision
+              imageBase64 = buffer.toString("base64");
+              imageMimeType = "application/pdf";
+              content = textNotes ? `Notes: ${textNotes}\n(Scanned PDF document attached)` : `Scanned PDF document attached`;
+            }
           } catch (pdfErr) {
-            console.warn("PDF parse warning:", pdfErr);
+            console.warn("PDF parse warning, sending to Gemini vision:", pdfErr);
+            imageBase64 = buffer.toString("base64");
+            imageMimeType = "application/pdf";
             content = textNotes || file.name;
           }
         } else if (file.type.startsWith("image/")) {

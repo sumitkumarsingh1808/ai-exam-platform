@@ -18,6 +18,7 @@ import {
   Key,
 } from "lucide-react";
 import Link from "next/link";
+import { safeParseJson } from "@/lib/api-client";
 
 interface EditableQuestion {
   questionText: string;
@@ -155,6 +156,12 @@ function CreateQuizContent() {
     setGenerating(true);
 
     try {
+      if (uploadedFile && uploadedFile.size > 4.2 * 1024 * 1024) {
+        throw new Error(
+          `"${uploadedFile.name}" is ${(uploadedFile.size / (1024 * 1024)).toFixed(1)}MB. Cloud serverless limits direct uploads to 4.2MB. Please select a file under 4.2MB, or copy-paste the text/questions into the study notes box below.`
+        );
+      }
+
       const formData = new FormData();
       formData.append("title", title);
       formData.append("subject", subject);
@@ -176,12 +183,13 @@ function CreateQuizContent() {
         body: formData,
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to generate questions");
+      const parsed = await safeParseJson(res);
+      if (!parsed.ok) {
+        throw new Error(parsed.error || "Failed to generate questions");
       }
 
-      if (data.quiz) {
+      const data = parsed.data;
+      if (data?.quiz) {
         if (data.quiz.title) setTitle(data.quiz.title);
         if (data.quiz.description) setDescription(data.quiz.description);
         if (data.quiz.questions && data.quiz.questions.length > 0) {
@@ -283,9 +291,9 @@ function CreateQuizContent() {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to create quiz");
+      const parsed = await safeParseJson(res);
+      if (!parsed.ok) {
+        throw new Error(parsed.error || "Failed to create quiz");
       }
 
       router.push("/admin/quizzes");
@@ -520,7 +528,7 @@ function CreateQuizContent() {
             {uploadedFile ? `Selected: ${uploadedFile.name}` : "Upload Study Material (PDF or Image)"}
           </p>
           <p className="text-[11px] text-blue-200 mt-0.5">
-            Supported formats: PDF, PNG, JPG, JPEG, WebP (Max 25MB)
+            Supported formats: PDF, PNG, JPG, JPEG, WebP (Max 4.2MB for cloud upload — for larger files, paste notes below)
           </p>
 
           <input
@@ -528,7 +536,18 @@ function CreateQuizContent() {
             id="file-upload"
             accept=".pdf,image/png,image/jpeg,image/jpg,image/webp"
             onChange={(e) => {
-              if (e.target.files?.[0]) setUploadedFile(e.target.files[0]);
+              const file = e.target.files?.[0];
+              if (!file) return;
+              if (file.size > 4.2 * 1024 * 1024) {
+                setError(
+                  `"${file.name}" is ${(file.size / (1024 * 1024)).toFixed(1)}MB. Cloud serverless limits direct file uploads to 4.2MB. Please choose a file under 4.2MB, or copy-paste the text/questions directly into the study notes field below.`
+                );
+                setUploadedFile(null);
+                e.target.value = "";
+                return;
+              }
+              setError(null);
+              setUploadedFile(file);
             }}
             className="hidden"
           />
