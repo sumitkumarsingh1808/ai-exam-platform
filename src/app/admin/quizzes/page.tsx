@@ -18,6 +18,7 @@ import {
   FolderPlus,
 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
+import { Quiz } from "@/lib/types";
 
 export default function QuizManagementPage() {
   const [quizzes, setQuizzes] = useState<any[]>([]);
@@ -34,8 +35,19 @@ export default function QuizManagementPage() {
 
   const loadQuizzes = async () => {
     try {
+      setLoading(true);
+      let storedDeleted: string[] = [];
+      try {
+        storedDeleted = JSON.parse(localStorage.getItem("nta_deleted_quiz_ids") || "[]");
+        if (Array.isArray(storedDeleted) && storedDeleted.length > 0) {
+          document.cookie = `nta_deleted_quizzes=${storedDeleted.join(",")}; path=/; max-age=31536000; SameSite=Lax`;
+        }
+      } catch {}
+
       const [resQ, resC] = await Promise.all([
-        fetch("/api/admin/quizzes"),
+        fetch("/api/admin/quizzes", {
+          headers: storedDeleted.length > 0 ? { "x-deleted-quizzes": storedDeleted.join(",") } : {},
+        }),
         fetch("/api/categories"),
       ]);
 
@@ -47,7 +59,12 @@ export default function QuizManagementPage() {
       const dataQ = await resQ.json();
       const dataC = await resC.json();
 
-      setQuizzes(dataQ.quizzes || []);
+      let list = dataQ.quizzes || [];
+      if (storedDeleted.length > 0) {
+        list = list.filter((q: Quiz) => !storedDeleted.includes(q.id));
+      }
+
+      setQuizzes(list);
       if (dataC.categories && Array.isArray(dataC.categories)) {
         setCategories(dataC.categories);
       }
@@ -98,19 +115,40 @@ export default function QuizManagementPage() {
   };
 
   const handleDeleteQuiz = async (id: string, title: string) => {
-    if (!confirm(`Are you sure you want to delete or archive the examination: "${title}"?`)) {
+    if (!confirm(`Are you sure you want to permanently delete the examination: "${title}"?\n\nThis will remove it completely from candidate dashboards and the server.`)) {
       return;
     }
 
     try {
-      const res = await fetch(`/api/admin/quizzes/${id}`, { method: "DELETE" });
-      const data = await res.json();
-      if (data.archived) {
-        alert("Notice: Quiz has historical attempts, so it has been archived to preserve audit records.");
+      // Optimistically remove from state immediately
+      setQuizzes((prev) => prev.filter((q) => q.id !== id));
+
+      // Save to localStorage and cookie
+      let storedList: string[] = [];
+      try {
+        storedList = JSON.parse(localStorage.getItem("nta_deleted_quiz_ids") || "[]");
+        if (!storedList.includes(id)) {
+          storedList.push(id);
+          localStorage.setItem("nta_deleted_quiz_ids", JSON.stringify(storedList));
+        }
+        document.cookie = `nta_deleted_quizzes=${storedList.join(",")}; path=/; max-age=31536000; SameSite=Lax`;
+      } catch {}
+
+      const res = await fetch(`/api/admin/quizzes/${id}`, {
+        method: "DELETE",
+        headers: {
+          "x-deleted-quizzes": storedList.join(","),
+        },
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || "Failed to delete quiz on server");
+        loadQuizzes();
       }
-      loadQuizzes();
     } catch {
       alert("Failed to delete quiz");
+      loadQuizzes();
     }
   };
 

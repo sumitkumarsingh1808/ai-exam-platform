@@ -26,6 +26,7 @@ interface DbSchema {
   attempts: Record<string, Attempt>;
   materials: Record<string, Material>;
   categories?: string[];
+  deletedQuizIds?: string[];
 }
 
 // Memory / Local / Serverless fallback store
@@ -64,18 +65,26 @@ async function getInitialSchema(): Promise<DbSchema> {
     categories: [...SEED_CATEGORIES],
     attempts: {},
     materials: {},
+    deletedQuizIds: [],
   };
 }
 
 // Loads local JSON or memory store
 async function loadStore(): Promise<DbSchema> {
-  if (memoryDb) return memoryDb;
+  if (memoryDb) {
+    if (!memoryDb.deletedQuizIds) memoryDb.deletedQuizIds = [];
+    return memoryDb;
+  }
 
   try {
     // 1. Check primary file location (including /tmp in serverless)
     if (fs.existsSync(DB_FILE)) {
       const data = fs.readFileSync(DB_FILE, "utf-8");
       memoryDb = JSON.parse(data);
+      if (!memoryDb!.deletedQuizIds) memoryDb!.deletedQuizIds = [];
+      for (const id of memoryDb!.deletedQuizIds) {
+        delete memoryDb!.quizzes[id];
+      }
       return memoryDb!;
     }
 
@@ -83,6 +92,10 @@ async function loadStore(): Promise<DbSchema> {
     if (IS_SERVERLESS && fs.existsSync(BUNDLED_DB_FILE)) {
       const bundledData = fs.readFileSync(BUNDLED_DB_FILE, "utf-8");
       memoryDb = JSON.parse(bundledData);
+      if (!memoryDb!.deletedQuizIds) memoryDb!.deletedQuizIds = [];
+      for (const id of memoryDb!.deletedQuizIds) {
+        delete memoryDb!.quizzes[id];
+      }
       try {
         if (!fs.existsSync(DATA_DIR)) {
           fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -186,21 +199,55 @@ export const db = {
       return snapshot.docs.map((d: any) => d.data() as Quiz);
     }
     const store = await loadStore();
+    const deletedSet = new Set(store.deletedQuizIds || []);
     return Object.values(store.quizzes).filter((q) => {
+      if (deletedSet.has(q.id)) return false;
+      if (q.status === "archived") return false;
       const statusMatch = includeDrafts || q.status === "published";
       const categoryMatch = !category || category === "all" || q.category?.toLowerCase() === category.toLowerCase();
       return statusMatch && categoryMatch;
     });
   },
 
-  async getQuiz(id: string): Promise<Quiz | null> {
+  async getQuiz(id: string, includeArchived = false): Promise<Quiz | null> {
     const adminFb = getFirebaseAdmin();
     if (adminFb) {
       const doc = await adminFb.firestore.collection("quizzes").doc(id).get();
       return doc.exists ? (doc.data() as Quiz) : null;
     }
     const store = await loadStore();
-    return store.quizzes[id] || null;
+    if (store.deletedQuizIds?.includes(id)) return null;
+    const quiz = store.quizzes[id] || null;
+    if (!quiz) return null;
+    if (!includeArchived && quiz.status === "archived") return null;
+    return quiz;
+  },
+
+  async registerDeletedQuizzes(ids: string[]): Promise<void> {
+    const adminFb = getFirebaseAdmin();
+    if (adminFb) {
+      for (const id of ids) {
+        await this.deleteQuiz(id);
+      }
+      return;
+    }
+    const store = await loadStore();
+    store.deletedQuizIds = store.deletedQuizIds || [];
+    let changed = false;
+    for (const id of ids) {
+      if (!id) continue;
+      if (!store.deletedQuizIds.includes(id)) {
+        store.deletedQuizIds.push(id);
+        changed = true;
+      }
+      if (store.quizzes[id]) {
+        delete store.quizzes[id];
+        changed = true;
+      }
+    }
+    if (changed) {
+      await saveStore();
+    }
   },
 
   async createQuiz(quiz: Quiz, questions: Question[]): Promise<Quiz> {
@@ -249,15 +296,30 @@ export const db = {
     const adminFb = getFirebaseAdmin();
     if (adminFb) {
       await adminFb.firestore.collection("quizzes").doc(id).delete();
+      const qDocs = await adminFb.firestore.collection("questions").where("quizId", "==", id).get();
+      for (const d of qDocs.docs) await d.ref.delete();
+      const aDocs = await adminFb.firestore.collection("attempts").where("quizId", "==", id).get();
+      for (const d of aDocs.docs) await d.ref.delete();
       return true;
     }
     const store = await loadStore();
-    if (!store.quizzes[id]) return false;
+    if (!store.deletedQuizIds) {
+      store.deletedQuizIds = [];
+    }
+    if (!store.deletedQuizIds.includes(id)) {
+      store.deletedQuizIds.push(id);
+    }
     delete store.quizzes[id];
     // Delete associated questions
     for (const [qId, q] of Object.entries(store.questions)) {
       if (q.quizId === id) {
         delete store.questions[qId];
+      }
+    }
+    // Delete associated attempts
+    for (const [attId, att] of Object.entries(store.attempts)) {
+      if (att.quizId === id) {
+        delete store.attempts[attId];
       }
     }
     await saveStore();

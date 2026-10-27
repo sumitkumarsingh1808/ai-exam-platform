@@ -45,9 +45,19 @@ export default function StudentDashboardPage() {
   useEffect(() => {
     async function loadData() {
       try {
+        let storedDeleted: string[] = [];
+        try {
+          storedDeleted = JSON.parse(localStorage.getItem("nta_deleted_quiz_ids") || "[]");
+          if (Array.isArray(storedDeleted) && storedDeleted.length > 0) {
+            document.cookie = `nta_deleted_quizzes=${storedDeleted.join(",")}; path=/; max-age=31536000; SameSite=Lax`;
+          }
+        } catch {}
+
         const [meRes, quizRes] = await Promise.all([
           fetch("/api/me"),
-          fetch("/api/quizzes"),
+          fetch("/api/quizzes", {
+            headers: storedDeleted.length > 0 ? { "x-deleted-quizzes": storedDeleted.join(",") } : {},
+          }),
         ]);
 
         const meData = await meRes.json();
@@ -60,7 +70,13 @@ export default function StudentDashboardPage() {
         };
 
         setUser(candidateUser);
-        setQuizzes(quizData.quizzes || []);
+
+        let candidateQuizzes = quizData.quizzes || [];
+        if (storedDeleted.length > 0) {
+          candidateQuizzes = candidateQuizzes.filter((q: any) => !storedDeleted.includes(q.id));
+        }
+        candidateQuizzes = candidateQuizzes.filter((q: any) => q.status === "published");
+        setQuizzes(candidateQuizzes);
 
         // Restore saved candidate stream preference
         const savedStream =

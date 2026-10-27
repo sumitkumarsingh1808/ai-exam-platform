@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { Navbar } from "@/components/Navbar";
 import { db } from "@/lib/db";
 import {
@@ -16,6 +17,17 @@ import { StreamExplorer } from "@/components/home/StreamExplorer";
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
+  try {
+    const cookieStore = await cookies();
+    const deletedCookie = cookieStore.get("nta_deleted_quizzes")?.value;
+    if (deletedCookie) {
+      const deletedList = deletedCookie.split(",").map((s) => s.trim()).filter(Boolean);
+      if (deletedList.length > 0) {
+        await db.registerDeletedQuizzes(deletedList);
+      }
+    }
+  } catch {}
+
   const [quizzes, categories] = await Promise.all([
     db.listQuizzes(false),
     db.getCategories(),

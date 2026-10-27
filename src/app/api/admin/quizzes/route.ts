@@ -11,6 +11,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // Sync any client-passed deleted quiz IDs from headers or cookies
+    const deletedHeader = req.headers.get("x-deleted-quizzes");
+    const deletedCookie = req.cookies.get("nta_deleted_quizzes")?.value;
+    const deletedList = [
+      ...(deletedHeader ? deletedHeader.split(",") : []),
+      ...(deletedCookie ? deletedCookie.split(",") : []),
+    ].map((s) => s.trim()).filter(Boolean);
+
+    if (deletedList.length > 0) {
+      await db.registerDeletedQuizzes(deletedList);
+    }
+
     const quizzes = await db.listQuizzes(true);
     return NextResponse.json({ quizzes });
   } catch (error: any) {

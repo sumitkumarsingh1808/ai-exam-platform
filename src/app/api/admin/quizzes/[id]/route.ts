@@ -14,7 +14,7 @@ export async function GET(
     }
 
     const { id } = await params;
-    const quiz = await db.getQuiz(id);
+    const quiz = await db.getQuiz(id, true);
     if (!quiz) {
       return NextResponse.json({ error: "Quiz not found" }, { status: 404 });
     }
@@ -83,20 +83,12 @@ export async function DELETE(
     }
 
     const { id } = await params;
-    // Check if there are existing attempts
-    const attempts = await db.listAttempts({ quizId: id });
-    if (attempts.length > 0) {
-      // Instead of hard deleting and breaking user history, archive the quiz
-      await db.updateQuiz(id, { status: "archived" });
-      return NextResponse.json({
-        success: true,
-        archived: true,
-        message: "Quiz has historical attempts, so it has been archived rather than permanently deleted.",
-      });
-    }
-
     await db.deleteQuiz(id);
-    return NextResponse.json({ success: true, message: "Quiz deleted successfully" });
+    return NextResponse.json({
+      success: true,
+      message: "Examination paper permanently deleted.",
+      deletedId: id,
+    });
   } catch (error: any) {
     console.error("Delete quiz error:", error);
     return NextResponse.json({ error: "Failed to delete quiz" }, { status: 500 });

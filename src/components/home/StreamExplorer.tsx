@@ -29,17 +29,29 @@ export function StreamExplorer({ initialQuizzes, categories }: StreamExplorerPro
     year: "numeric",
   });
 
-  // Today's target papers
-  const todaysPapers = useMemo(() => {
-    return initialQuizzes.filter((q) => q.isDailyPaper);
+  // Client-side tombstone filtering
+  const activeQuizzes = useMemo(() => {
+    if (typeof window === "undefined") return initialQuizzes;
+    try {
+      const stored = JSON.parse(localStorage.getItem("nta_deleted_quiz_ids") || "[]");
+      if (Array.isArray(stored) && stored.length > 0) {
+        return initialQuizzes.filter((q) => !stored.includes(q.id));
+      }
+    } catch {}
+    return initialQuizzes;
   }, [initialQuizzes]);
 
+  // Today's target papers
+  const todaysPapers = useMemo(() => {
+    return activeQuizzes.filter((q) => q.isDailyPaper);
+  }, [activeQuizzes]);
+
   const filteredQuizzes = useMemo(() => {
-    if (selectedCategory === "all") return initialQuizzes;
-    return initialQuizzes.filter(
+    if (selectedCategory === "all") return activeQuizzes;
+    return activeQuizzes.filter(
       (q) => (q.category || "Banking").toLowerCase() === selectedCategory.toLowerCase()
     );
-  }, [initialQuizzes, selectedCategory]);
+  }, [activeQuizzes, selectedCategory]);
 
   return (
     <div className="space-y-10">
