@@ -52,6 +52,14 @@ export default function ExamInstructionsPage({
         }
 
         if (!res.ok) {
+          try {
+            const customObj = JSON.parse(localStorage.getItem("nta_custom_quizzes") || "{}");
+            if (customObj[quizId]?.quiz) {
+              setQuiz(customObj[quizId].quiz);
+              return;
+            }
+          } catch {}
+
           const errData = await res.json().catch(() => ({}));
           throw new Error(errData.error || "Examination paper not found");
         }
@@ -87,22 +95,40 @@ export default function ExamInstructionsPage({
     setStarting(true);
 
     try {
+      const customPayload = (() => {
+        try {
+          const customObj = JSON.parse(localStorage.getItem("nta_custom_quizzes") || "{}");
+          return customObj[quizId] || null;
+        } catch {
+          return null;
+        }
+      })();
+
       let res = await fetch(`/api/quizzes/${quizId}/attempts`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          quizSnapshot: quiz,
+          customQuizData: customPayload,
+        }),
       });
 
       // If attempt creation failed due to serverless cold-start, sync and retry
-      if (!res.ok) {
+      if (!res.ok && customPayload) {
         try {
-          const customObj = JSON.parse(localStorage.getItem("nta_custom_quizzes") || "{}");
-          if (customObj[quizId]?.quiz) {
-            await fetch("/api/quizzes/sync-custom", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(customObj[quizId]),
-            });
-            res = await fetch(`/api/quizzes/${quizId}/attempts`, { method: "POST" });
-          }
+          await fetch("/api/quizzes/sync-custom", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(customPayload),
+          });
+          res = await fetch(`/api/quizzes/${quizId}/attempts`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              quizSnapshot: quiz,
+              customQuizData: customPayload,
+            }),
+          });
         } catch {}
       }
 

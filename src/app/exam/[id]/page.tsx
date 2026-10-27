@@ -65,8 +65,10 @@ export default function ExamLivePage({
         }`;
         let res = await fetch(url);
 
+        let data = await res.json().catch(() => ({}));
+
         // Self-heal from local storage if needed on fresh serverless containers
-        if (!res.ok) {
+        if (!res.ok || !data.questions || data.questions.length === 0) {
           try {
             const customObj = JSON.parse(localStorage.getItem("nta_custom_quizzes") || "{}");
             if (customObj[quizId]?.quiz) {
@@ -76,11 +78,10 @@ export default function ExamLivePage({
                 body: JSON.stringify(customObj[quizId]),
               });
               res = await fetch(url);
+              data = await res.json().catch(() => ({}));
             }
           } catch {}
         }
-
-        const data = await res.json();
 
         if (!res.ok) {
           throw new Error(data.error || "Failed to load examination");
@@ -147,7 +148,7 @@ export default function ExamLivePage({
         const res = await fetch(`/api/attempts/${attempt.id}/answers`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ answers: updatedAnswers }),
+          body: JSON.stringify({ answers: updatedAnswers, quizId }),
         });
 
         if (res.ok) {
@@ -159,7 +160,7 @@ export default function ExamLivePage({
         setSaveStatus("error");
       }
     },
-    [attempt?.id]
+    [attempt?.id, quizId]
   );
 
   // Auto-submit when countdown hits zero
@@ -169,7 +170,7 @@ export default function ExamLivePage({
       await fetch(`/api/attempts/${attempt.id}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers }),
+        body: JSON.stringify({ answers, quizId }),
       });
       router.push(`/exam/${quizId}/result/${attempt.id}`);
     } catch {
@@ -410,7 +411,7 @@ export default function ExamLivePage({
       const res = await fetch(`/api/attempts/${attempt.id}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers }),
+        body: JSON.stringify({ answers, quizId }),
       });
 
       const data = await res.json();

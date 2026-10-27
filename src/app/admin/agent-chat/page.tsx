@@ -213,6 +213,23 @@ export default function AgentChatPage() {
         throw new Error(data.error || "Failed to publish exam paper.");
       }
 
+      // Persist in localStorage as backup across serverless containers
+      try {
+        if (data?.quiz) {
+          const custom = JSON.parse(localStorage.getItem("nta_custom_quizzes") || "{}");
+          custom[data.quiz.id] = {
+            quiz: data.quiz,
+            questions: examToSave.questions.map((q: any, idx: number) => ({
+              ...q,
+              id: q.id || `q-${data.quiz.id}-${idx + 1}`,
+              quizId: data.quiz.id,
+              order: idx + 1,
+            })),
+          };
+          localStorage.setItem("nta_custom_quizzes", JSON.stringify(custom));
+        }
+      } catch {}
+
       setSavedExamResult({
         id: data.quiz.id,
         title: data.quiz.title,

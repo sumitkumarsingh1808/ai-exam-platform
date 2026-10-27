@@ -9,6 +9,7 @@ export async function POST(
 ) {
   try {
     const { id: quizId } = await params;
+    const body = await req.json().catch(() => ({}));
     const user = await getUserSession(req);
     const admin = await getAdminSession(req);
     const isAdmin = Boolean(admin && admin.role === "admin");
@@ -18,8 +19,26 @@ export async function POST(
     const userName = user?.displayName || (isAdmin ? "Admin Examiner (Preview)" : "Candidate " + userId.substring(userId.length - 4));
     const userEmail = user?.email || (isAdmin ? "admin@nta.ac.in" : `${userId}@exam.candidate`);
 
-    const quiz = await db.getQuiz(quizId, true);
-    if (!quiz || (quiz.status !== "published" && !isAdmin)) {
+    let quiz = await db.getQuiz(quizId, true);
+
+    // If quiz is not in serverless container memory, self-hydrate from client payload
+    if (!quiz) {
+      const candidateQuiz = body.customQuizData?.quiz || (body.quizSnapshot?.id ? body.quizSnapshot : null);
+      const candidateQuestions = body.customQuizData?.questions || body.questions || [];
+      if (candidateQuiz) {
+        await db.syncCustomQuizzes([candidateQuiz], candidateQuestions);
+        quiz = await db.getQuiz(quizId, true);
+      }
+    }
+
+    if (!quiz && body.quizSnapshot?.id === quizId) {
+      quiz = body.quizSnapshot;
+    }
+    if (!quiz && body.customQuizData?.quiz?.id === quizId) {
+      quiz = body.customQuizData.quiz;
+    }
+
+    if (!quiz) {
       return NextResponse.json({ error: "Examination is not available" }, { status: 404 });
     }
 
@@ -38,10 +57,23 @@ export async function POST(
     }
 
     const now = new Date();
-    const durationMs = quiz.durationMinutes * 60 * 1000;
+    const durationMs = (quiz.durationMinutes || 60) * 60 * 1000;
     const deadline = new Date(now.getTime() + durationMs);
 
-    const questions = await db.getQuizQuestions(quizId, true);
+    let questions = await db.getQuizQuestions(quizId, true);
+
+    // Hydrate questions if they were missing on this serverless instance
+    if (questions.length === 0) {
+      const incomingQuestions = body.customQuizData?.questions || body.questions || [];
+      if (incomingQuestions.length > 0) {
+        await db.syncCustomQuizzes([quiz], incomingQuestions);
+        questions = await db.getQuizQuestions(quizId, true);
+        if (questions.length === 0) {
+          questions = incomingQuestions;
+        }
+      }
+    }
+
     // Initialize initial answers with 'not_visited' for question palette
     const initialAnswers: Attempt["answers"] = {};
     questions.forEach((q, idx) => {
@@ -66,7 +98,7 @@ export async function POST(
     };
 
     const saved = await db.createAttempt(newAttempt);
-    return NextResponse.json({ success: true, attempt: saved });
+    return NextResponse.json({ success: true, attempt: saved || newAttempt });
   } catch (error: any) {
     console.error("Start attempt error:", error);
     return NextResponse.json({ error: "Failed to start examination" }, { status: 500 });

@@ -117,16 +117,22 @@ export default function QuizManagementPage() {
         )
       );
 
-      // Update in localStorage custom quizzes
+      // Update in localStorage custom quizzes and construct payload
+      let customPayload: any = {};
       try {
         const customObj = JSON.parse(localStorage.getItem("nta_custom_quizzes") || "{}");
         if (customObj[id]?.quiz) {
           customObj[id].quiz.status = customObj[id].quiz.status === "published" ? "draft" : "published";
           localStorage.setItem("nta_custom_quizzes", JSON.stringify(customObj));
+          customPayload = customObj[id];
         }
       } catch {}
 
-      const res = await fetch(`/api/admin/quizzes/${id}/publish`, { method: "POST" });
+      const res = await fetch(`/api/admin/quizzes/${id}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(customPayload),
+      });
       const data = await res.json();
       if (!res.ok) {
         alert(data.error || "Failed to toggle publish status on server");

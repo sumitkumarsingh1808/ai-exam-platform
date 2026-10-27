@@ -9,7 +9,26 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const attempt = await db.getAttempt(id);
+    const body = await req.json().catch(() => ({}));
+    let attempt = await db.getAttempt(id);
+
+    // Fallback if attempt was created on another serverless container
+    if (!attempt && body.quizId) {
+      const now = new Date();
+      attempt = {
+        id,
+        quizId: body.quizId,
+        quizTitle: "Examination",
+        userId: "candidate",
+        userName: "Candidate",
+        userEmail: "candidate@nta.ac.in",
+        status: "in_progress",
+        startedAt: now.toISOString(),
+        deadlineAt: new Date(now.getTime() + 7200000).toISOString(),
+        answers: body.answers || {},
+      };
+      await db.createAttempt(attempt);
+    }
 
     if (!attempt) {
       return NextResponse.json({ error: "Attempt not found" }, { status: 404 });
@@ -25,7 +44,6 @@ export async function POST(
       });
     }
 
-    const body = await req.json().catch(() => ({}));
     const incomingAnswers = body.answers || {};
 
     const finalAnswers = {

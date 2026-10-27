@@ -13,7 +13,17 @@ export async function POST(
     }
 
     const { id } = await params;
-    const quiz = await db.getQuiz(id, true);
+    const body = await req.json().catch(() => ({}));
+    let quiz = await db.getQuiz(id, true);
+
+    // Self-hydrate custom quiz if this serverless instance hasn't seen it yet
+    if (!quiz && (body.quiz || body.customQuizData?.quiz)) {
+      const q = body.quiz || body.customQuizData?.quiz;
+      const questions = body.questions || body.customQuizData?.questions || [];
+      await db.syncCustomQuizzes([q], questions);
+      quiz = await db.getQuiz(id, true);
+    }
+
     if (!quiz) {
       return NextResponse.json({ error: "Quiz not found" }, { status: 404 });
     }
