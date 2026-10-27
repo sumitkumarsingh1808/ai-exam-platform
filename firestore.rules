@@ -1,0 +1,49 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'admin';
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // Quizzes Collection
+    match /quizzes/{quizId} {
+      // Anyone can read published quizzes; drafts only by admin
+      allow read: if resource.data.status == 'published' || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Questions Collection
+    match /questions/{questionId} {
+      // Direct client reading of raw questions is blocked; client-safe API route strips answers
+      allow read, write: if isAdmin();
+    }
+
+    // Attempts Collection
+    match /attempts/{attemptId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
+      // Only server-side route handlers should write attempt scores to prevent cheating
+      allow write: if isAdmin();
+    }
+
+    // Materials Collection
+    match /materials/{materialId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
