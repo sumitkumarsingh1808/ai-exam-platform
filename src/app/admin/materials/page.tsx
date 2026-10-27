@@ -15,6 +15,7 @@ import {
 import { formatDate } from "@/lib/utils";
 import Link from "next/link";
 import { safeParseJson } from "@/lib/api-client";
+import { processFileForQuiz } from "@/lib/client-document-processor";
 
 export default function MaterialsPage() {
   const [materials, setMaterials] = useState<any[]>([]);
@@ -48,9 +49,9 @@ export default function MaterialsPage() {
     e.preventDefault();
     if (!selectedFile) return;
 
-    if (selectedFile.size > 4.2 * 1024 * 1024) {
+    if (selectedFile.size > 25 * 1024 * 1024) {
       setError(
-        `"${selectedFile.name}" is ${(selectedFile.size / (1024 * 1024)).toFixed(1)}MB. Cloud hosting limits uploads to 4.2MB. Please select a smaller file under 4.2MB.`
+        `"${selectedFile.name}" is ${(selectedFile.size / (1024 * 1024)).toFixed(1)}MB. Maximum supported file size is 25MB.`
       );
       return;
     }
@@ -59,13 +60,40 @@ export default function MaterialsPage() {
     setUploading(true);
 
     try {
-      const formData = new FormData();
-      formData.append("file", selectedFile);
+      const processed = await processFileForQuiz(selectedFile);
+      let res: Response;
 
-      const res = await fetch("/api/admin/materials/upload", {
-        method: "POST",
-        body: formData,
-      });
+      if (processed.mode === "text") {
+        res = await fetch("/api/admin/materials/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: selectedFile.name,
+            fileSize: selectedFile.size,
+            fileType: selectedFile.type,
+            extractedText: processed.extractedText,
+          }),
+        });
+      } else if (processed.mode === "image") {
+        res = await fetch("/api/admin/materials/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: selectedFile.name,
+            fileSize: selectedFile.size,
+            fileType: "image/jpeg",
+            isImage: true,
+            imageBase64: processed.imageBase64,
+          }),
+        });
+      } else {
+        const formData = new FormData();
+        formData.append("file", selectedFile);
+        res = await fetch("/api/admin/materials/upload", {
+          method: "POST",
+          body: formData,
+        });
+      }
 
       const parsed = await safeParseJson(res);
       if (!parsed.ok) throw new Error(parsed.error || "Upload failed");
@@ -107,7 +135,7 @@ export default function MaterialsPage() {
               Select or Drop Syllabus File to Upload
             </p>
             <p className="text-xs text-slate-500 mt-1">
-              Supported formats: PDF, PNG, JPG, JPEG, WebP (Max 4.2MB for cloud upload)
+              Supported formats: PDF, PNG, JPG, JPEG, WebP (Up to 25MB supported with automatic browser optimization)
             </p>
 
             <input
@@ -117,9 +145,9 @@ export default function MaterialsPage() {
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
-                if (file.size > 4.2 * 1024 * 1024) {
+                if (file.size > 25 * 1024 * 1024) {
                   setError(
-                    `"${file.name}" is ${(file.size / (1024 * 1024)).toFixed(1)}MB. Cloud hosting limits uploads to 4.2MB. Please select a smaller file under 4.2MB.`
+                    `"${file.name}" is ${(file.size / (1024 * 1024)).toFixed(1)}MB. Maximum supported file size is 25MB.`
                   );
                   setSelectedFile(null);
                   e.target.value = "";

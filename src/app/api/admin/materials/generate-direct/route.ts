@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
     let apiKey: string | undefined;
     let imageBase64: string | undefined;
     let imageMimeType: string | undefined;
+    let images: Array<{ data: string; mimeType: string }> = [];
 
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
@@ -80,9 +81,12 @@ export async function POST(req: NextRequest) {
       language = json.language || "English";
       customPrompt = json.customPrompt || "";
       apiKey = json.apiKey || undefined;
+      imageBase64 = json.imageBase64 || undefined;
+      imageMimeType = json.imageMimeType || undefined;
+      images = json.images || [];
     }
 
-    if (!content && !imageBase64) {
+    if (!content && !imageBase64 && images.length === 0) {
       return NextResponse.json(
         { error: "Please upload a PDF or enter study text to generate questions." },
         { status: 400 }
@@ -99,6 +103,7 @@ export async function POST(req: NextRequest) {
       customPrompt,
       imageBase64,
       imageMimeType,
+      images,
       apiKey,
     });
 

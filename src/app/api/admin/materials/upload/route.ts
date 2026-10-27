@@ -26,62 +26,78 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const formData = await req.formData();
-    const file = formData.get("file") as File | null;
-
-    if (!file) {
-      return NextResponse.json({ error: "No file provided" }, { status: 400 });
-    }
-
-    const isPdfByName = file.name.toLowerCase().endsWith(".pdf");
-    const isImageByName = /\.(png|jpe?g|webp)$/i.test(file.name);
-
-    if (!ALLOWED_MIME_TYPES.includes(file.type) && !isPdfByName && !isImageByName) {
-      return NextResponse.json(
-        {
-          error: `Unsupported file type: ${file.type || file.name}. Please upload a PDF, PNG, JPG, or WebP file.`,
-        },
-        { status: 400 }
-      );
-    }
-
-    if (file.size > MAX_FILE_SIZE) {
-      return NextResponse.json(
-        { error: "File exceeds maximum size limit of 25MB." },
-        { status: 400 }
-      );
-    }
-
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
+    const contentType = req.headers.get("content-type") || "";
     let extractedText = "";
-    const isPdf = file.type === "application/pdf" || isPdfByName;
-    const isImage = file.type.startsWith("image/") || isImageByName;
+    let fileName = "";
+    let fileSize = 0;
+    let fileType = "";
+    let isImage = false;
 
-    if (isPdf) {
-      try {
-        const parsed = await pdfParse(buffer);
-        extractedText = parsed.text ? parsed.text.trim() : "";
-      } catch (err: any) {
-        console.warn("PDF parse error, using fallback reader:", err);
-        extractedText = `PDF Document: ${file.name}\n(Text stream processed)`;
+    if (contentType.includes("multipart/form-data")) {
+      const formData = await req.formData();
+      const file = formData.get("file") as File | null;
+
+      if (!file) {
+        return NextResponse.json({ error: "No file provided" }, { status: 400 });
       }
-    } else if (isImage) {
-      const base64 = buffer.toString("base64");
-      extractedText = `data:${file.type || "image/jpeg"};base64,${base64}`;
+
+      fileName = file.name;
+      fileSize = file.size;
+      fileType = file.type;
+
+      const isPdfByName = file.name.toLowerCase().endsWith(".pdf");
+      const isImageByName = /\.(png|jpe?g|webp)$/i.test(file.name);
+
+      if (!ALLOWED_MIME_TYPES.includes(file.type) && !isPdfByName && !isImageByName) {
+        return NextResponse.json(
+          {
+            error: `Unsupported file type: ${file.type || file.name}. Please upload a PDF, PNG, JPG, or WebP file.`,
+          },
+          { status: 400 }
+        );
+      }
+
+      const arrayBuffer = await file.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      const isPdf = file.type === "application/pdf" || isPdfByName;
+      isImage = file.type.startsWith("image/") || isImageByName;
+
+      if (isPdf) {
+        try {
+          const parsed = await pdfParse(buffer);
+          extractedText = parsed.text ? parsed.text.trim() : "";
+        } catch (err: any) {
+          console.warn("PDF parse error, using fallback reader:", err);
+          extractedText = `PDF Document: ${file.name}\n(Text stream processed)`;
+        }
+      } else if (isImage) {
+        const base64 = buffer.toString("base64");
+        extractedText = `data:${file.type || "image/jpeg"};base64,${base64}`;
+      }
+    } else {
+      // Support pre-extracted client-side payloads (for files up to 25MB)
+      const json = await req.json();
+      fileName = json.fileName || "Uploaded Material";
+      fileSize = json.fileSize || 0;
+      fileType = json.fileType || "application/pdf";
+      extractedText = json.extractedText || "";
+      isImage = Boolean(json.isImage || fileType.startsWith("image/"));
+      if (json.imageBase64) {
+        extractedText = `data:${fileType || "image/jpeg"};base64,${json.imageBase64}`;
+      }
     }
 
     const materialId = `mat-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const newMaterial: Material = {
       id: materialId,
       uploadedBy: admin?.username || "admin",
-      originalFileName: file.name,
-      storagePath: `/materials/${materialId}-${file.name}`,
-      fileType: file.type || (isPdf ? "application/pdf" : "image/jpeg"),
-      fileSize: file.size,
+      originalFileName: fileName,
+      storagePath: `/materials/${materialId}-${fileName}`,
+      fileType: fileType || "application/pdf",
+      fileSize: fileSize,
       processingStatus: "processed",
-      extractedText: isPdf ? extractedText : `${file.name} (Image document ready for Gemini vision)`,
+      extractedText: !isImage ? extractedText : `${fileName} (Image document ready for Gemini vision)`,
       createdAt: new Date().toISOString(),
     };
 

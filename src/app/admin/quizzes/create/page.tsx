@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { safeParseJson } from "@/lib/api-client";
+import { processFileForQuiz } from "@/lib/client-document-processor";
 
 interface EditableQuestion {
   questionText: string;
@@ -62,6 +63,7 @@ function CreateQuizContent() {
 
   // Status & Generated Questions
   const [generating, setGenerating] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -149,38 +151,90 @@ function CreateQuizContent() {
     }
   };
 
-  // Handle AI Quiz Generation from Uploaded File or Text
+  // Handle AI Quiz Generation from Uploaded File or Text (Supports up to 25MB)
   const handleGenerateWithAI = async () => {
     setError(null);
     setSuccessMsg(null);
     setGenerating(true);
+    setProcessingStatus("Initializing AI Generation Engine...");
 
     try {
-      if (uploadedFile && uploadedFile.size > 4.2 * 1024 * 1024) {
-        throw new Error(
-          `"${uploadedFile.name}" is ${(uploadedFile.size / (1024 * 1024)).toFixed(1)}MB. Cloud serverless limits direct uploads to 4.2MB. Please select a file under 4.2MB, or copy-paste the text/questions into the study notes box below.`
-        );
-      }
-
-      const formData = new FormData();
-      formData.append("title", title);
-      formData.append("subject", subject);
-      formData.append("numQuestions", numQuestions.toString());
-      formData.append("difficulty", difficulty);
-      formData.append("language", language);
-      formData.append("customPrompt", customPrompt);
-      formData.append("textNotes", studyText);
-      if (userApiKey) {
-        formData.append("apiKey", userApiKey);
-      }
+      let bodyData: any = null;
+      let isJson = true;
 
       if (uploadedFile) {
-        formData.append("file", uploadedFile);
+        setProcessingStatus(`Processing ${uploadedFile.name} (${(uploadedFile.size / (1024 * 1024)).toFixed(1)}MB)...`);
+        const processed = await processFileForQuiz(uploadedFile, (msg) => setProcessingStatus(msg));
+
+        if (processed.mode === "text") {
+          bodyData = {
+            content: processed.extractedText,
+            title,
+            subject,
+            numQuestions,
+            difficulty,
+            language,
+            customPrompt,
+            apiKey: userApiKey || undefined,
+          };
+        } else if (processed.mode === "scanned_pdf") {
+          bodyData = {
+            images: processed.images,
+            title,
+            subject,
+            numQuestions,
+            difficulty,
+            language,
+            customPrompt,
+            apiKey: userApiKey || undefined,
+          };
+        } else if (processed.mode === "image") {
+          bodyData = {
+            imageBase64: processed.imageBase64,
+            imageMimeType: processed.imageMimeType,
+            content: studyText,
+            title,
+            subject,
+            numQuestions,
+            difficulty,
+            language,
+            customPrompt,
+            apiKey: userApiKey || undefined,
+          };
+        } else {
+          // Raw small file
+          isJson = false;
+          const formData = new FormData();
+          formData.append("title", title);
+          formData.append("subject", subject);
+          formData.append("numQuestions", numQuestions.toString());
+          formData.append("difficulty", difficulty);
+          formData.append("language", language);
+          formData.append("customPrompt", customPrompt);
+          formData.append("textNotes", studyText);
+          if (userApiKey) formData.append("apiKey", userApiKey);
+          formData.append("file", uploadedFile);
+          bodyData = formData;
+        }
+      } else {
+        bodyData = {
+          content: studyText,
+          title,
+          subject,
+          numQuestions,
+          difficulty,
+          language,
+          customPrompt,
+          apiKey: userApiKey || undefined,
+        };
       }
+
+      setProcessingStatus("Generating questions via Gemini AI...");
 
       const res = await fetch("/api/admin/materials/generate-direct", {
         method: "POST",
-        body: formData,
+        headers: isJson ? { "Content-Type": "application/json" } : undefined,
+        body: isJson ? JSON.stringify(bodyData) : bodyData,
       });
 
       const parsed = await safeParseJson(res);
@@ -201,6 +255,7 @@ function CreateQuizContent() {
       setError(err.message);
     } finally {
       setGenerating(false);
+      setProcessingStatus(null);
     }
   };
 
@@ -528,7 +583,7 @@ function CreateQuizContent() {
             {uploadedFile ? `Selected: ${uploadedFile.name}` : "Upload Study Material (PDF or Image)"}
           </p>
           <p className="text-[11px] text-blue-200 mt-0.5">
-            Supported formats: PDF, PNG, JPG, JPEG, WebP (Max 4.2MB for cloud upload — for larger files, paste notes below)
+            Supported formats: PDF, PNG, JPG, JPEG, WebP (Up to 25MB — automatically processed and optimized)
           </p>
 
           <input
@@ -538,9 +593,9 @@ function CreateQuizContent() {
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (!file) return;
-              if (file.size > 4.2 * 1024 * 1024) {
+              if (file.size > 25 * 1024 * 1024) {
                 setError(
-                  `"${file.name}" is ${(file.size / (1024 * 1024)).toFixed(1)}MB. Cloud serverless limits direct file uploads to 4.2MB. Please choose a file under 4.2MB, or copy-paste the text/questions directly into the study notes field below.`
+                  `"${file.name}" is ${(file.size / (1024 * 1024)).toFixed(1)}MB. Maximum supported file size is 25MB.`
                 );
                 setUploadedFile(null);
                 e.target.value = "";
@@ -632,23 +687,30 @@ function CreateQuizContent() {
         </div>
 
         {/* Generate Button */}
-        <button
-          onClick={handleGenerateWithAI}
-          disabled={generating}
-          className="w-full py-2.5 px-4 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-slate-950 font-black text-xs rounded-lg shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          {generating ? (
-            <>
-              <span className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-              <span>Analyzing Document &amp; Extracting Questions...</span>
-            </>
-          ) : (
-            <>
-              <Sparkles className="w-4 h-4" />
-              <span>Generate Questions from Document</span>
-            </>
+        <div className="space-y-1.5">
+          <button
+            onClick={handleGenerateWithAI}
+            disabled={generating}
+            className="w-full py-2.5 px-4 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-slate-950 font-black text-xs rounded-lg shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {generating ? (
+              <>
+                <span className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                <span>{processingStatus || "Analyzing Document & Extracting Questions..."}</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4" />
+                <span>Generate Questions from Document</span>
+              </>
+            )}
+          </button>
+          {generating && processingStatus && (
+            <p className="text-center text-[11px] text-amber-300 font-medium animate-pulse">
+              {processingStatus}
+            </p>
           )}
-        </button>
+        </div>
       </section>
 
       {/* 3. Interactive Question Editor */}

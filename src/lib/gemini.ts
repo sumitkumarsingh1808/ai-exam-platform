@@ -29,6 +29,7 @@ export interface GenerateQuizParams {
   customPrompt?: string;
   imageBase64?: string; // Optional image data for multimodal
   imageMimeType?: string;
+  images?: Array<{ data: string; mimeType: string }>; // Multi-page scanned PDF or images
   apiKey?: string; // Optional override key
 }
 
@@ -157,6 +158,7 @@ export async function generateQuizWithGemini(
     customPrompt = "",
     imageBase64,
     imageMimeType,
+    images = [],
     apiKey,
   } = params;
 
@@ -240,6 +242,18 @@ ${content ? content.substring(0, 35000) : "Refer to the attached image/document.
           mimeType: imageMimeType,
         },
       });
+    }
+    if (images && Array.isArray(images)) {
+      for (const img of images) {
+        if (img?.data && img?.mimeType) {
+          contents.push({
+            inlineData: {
+              data: img.data,
+              mimeType: img.mimeType,
+            },
+          });
+        }
+      }
     }
     contents.push(promptText);
 
