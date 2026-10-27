@@ -72,6 +72,20 @@ export default function StudentDashboardPage() {
         setUser(candidateUser);
 
         let candidateQuizzes = quizData.quizzes || [];
+
+        // Check for local published custom quizzes
+        try {
+          const customObj = JSON.parse(localStorage.getItem("nta_custom_quizzes") || "{}");
+          for (const item of Object.values(customObj) as any[]) {
+            const cq = item?.quiz;
+            if (cq && cq.status === "published" && !storedDeleted.includes(cq.id)) {
+              if (!candidateQuizzes.some((q: any) => q.id === cq.id)) {
+                candidateQuizzes.push(cq);
+              }
+            }
+          }
+        } catch {}
+
         if (storedDeleted.length > 0) {
           candidateQuizzes = candidateQuizzes.filter((q: any) => !storedDeleted.includes(q.id));
         }

@@ -13,7 +13,7 @@ export async function POST(
     }
 
     const { id } = await params;
-    const quiz = await db.getQuiz(id);
+    const quiz = await db.getQuiz(id, true);
     if (!quiz) {
       return NextResponse.json({ error: "Quiz not found" }, { status: 404 });
     }

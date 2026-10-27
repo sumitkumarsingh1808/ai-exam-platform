@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getUserSession } from "@/lib/auth";
+import { getUserSession, getAdminSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ClientExamQuestion } from "@/lib/types";
 
@@ -10,11 +10,13 @@ export async function GET(
   try {
     const { id: quizId } = await params;
     const user = await getUserSession(req);
+    const admin = await getAdminSession(req);
+    const isAdmin = Boolean(admin && admin.role === "admin");
     const searchParams = req.nextUrl.searchParams;
     const attemptId = searchParams.get("attemptId");
 
-    const quiz = await db.getQuiz(quizId);
-    if (!quiz || quiz.status !== "published") {
+    const quiz = await db.getQuiz(quizId, true);
+    if (!quiz || (quiz.status !== "published" && !isAdmin)) {
       return NextResponse.json({ error: "Examination not found or not published" }, { status: 404 });
     }
 

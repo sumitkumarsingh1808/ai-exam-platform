@@ -71,54 +71,66 @@ async function getInitialSchema(): Promise<DbSchema> {
 
 // Loads local JSON or memory store
 async function loadStore(): Promise<DbSchema> {
-  if (memoryDb) {
-    if (!memoryDb.deletedQuizIds) memoryDb.deletedQuizIds = [];
-    return memoryDb;
-  }
-
-  try {
-    // 1. Check primary file location (including /tmp in serverless)
-    if (fs.existsSync(DB_FILE)) {
-      const data = fs.readFileSync(DB_FILE, "utf-8");
-      memoryDb = JSON.parse(data);
-      if (!memoryDb!.deletedQuizIds) memoryDb!.deletedQuizIds = [];
-      for (const id of memoryDb!.deletedQuizIds) {
-        delete memoryDb!.quizzes[id];
+  if (!memoryDb) {
+    try {
+      // 1. Check primary file location (including /tmp in serverless)
+      if (fs.existsSync(DB_FILE)) {
+        const data = fs.readFileSync(DB_FILE, "utf-8");
+        memoryDb = JSON.parse(data);
+      } else if (IS_SERVERLESS && fs.existsSync(BUNDLED_DB_FILE)) {
+        // 2. In Vercel serverless, seed /tmp from the bundled repository file if available
+        const bundledData = fs.readFileSync(BUNDLED_DB_FILE, "utf-8");
+        memoryDb = JSON.parse(bundledData);
       }
-      return memoryDb!;
+    } catch (err) {
+      console.warn("Could not read local db.json file, initializing memory database.", err);
     }
 
-    // 2. In Vercel serverless, seed /tmp from the bundled repository file if available
-    if (IS_SERVERLESS && fs.existsSync(BUNDLED_DB_FILE)) {
-      const bundledData = fs.readFileSync(BUNDLED_DB_FILE, "utf-8");
-      memoryDb = JSON.parse(bundledData);
-      if (!memoryDb!.deletedQuizIds) memoryDb!.deletedQuizIds = [];
-      for (const id of memoryDb!.deletedQuizIds) {
-        delete memoryDb!.quizzes[id];
-      }
-      try {
-        if (!fs.existsSync(DATA_DIR)) {
-          fs.mkdirSync(DATA_DIR, { recursive: true });
-        }
-        fs.writeFileSync(DB_FILE, JSON.stringify(memoryDb, null, 2), "utf-8");
-      } catch (e) {
-        // Fallback to in-memory if write is blocked
-      }
-      return memoryDb!;
+    if (!memoryDb) {
+      memoryDb = await getInitialSchema();
     }
-  } catch (err) {
-    console.warn("Could not read local db.json file, initializing memory database.", err);
   }
 
-  memoryDb = await getInitialSchema();
-  try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+  // Ensure collections exist
+  if (!memoryDb.deletedQuizIds) memoryDb.deletedQuizIds = [];
+  if (!memoryDb.quizzes) memoryDb.quizzes = {};
+  if (!memoryDb.questions) memoryDb.questions = {};
+  if (!memoryDb.attempts) memoryDb.attempts = {};
+  if (!memoryDb.materials) memoryDb.materials = {};
+
+  const deletedSet = new Set(memoryDb.deletedQuizIds);
+
+  // ALWAYS merge official SEED_QUIZZES as base, preserving custom quizzes and updates
+  for (const [id, seedQuiz] of Object.entries(SEED_QUIZZES)) {
+    if (!deletedSet.has(id) && !memoryDb.quizzes[id]) {
+      memoryDb.quizzes[id] = { ...seedQuiz };
     }
-    fs.writeFileSync(DB_FILE, JSON.stringify(memoryDb, null, 2), "utf-8");
-  } catch {
-    // If running in a read-only filesystem environment (e.g. edge or serverless tmp), memoryDb is retained in memory
   }
+
+  // Strip any quiz that was explicitly deleted
+  for (const id of memoryDb.deletedQuizIds) {
+    delete memoryDb.quizzes[id];
+  }
+
+  // ALWAYS merge official SEED_QUESTIONS as base
+  for (const [qId, seedQ] of Object.entries(SEED_QUESTIONS)) {
+    if (!deletedSet.has(seedQ.quizId) && !memoryDb.questions[qId]) {
+      memoryDb.questions[qId] = { ...seedQ };
+    }
+  }
+
+  // Strip questions belonging to deleted quizzes
+  for (const [qId, q] of Object.entries(memoryDb.questions)) {
+    if (deletedSet.has(q.quizId)) {
+      delete memoryDb.questions[qId];
+    }
+  }
+
+  // Merge categories
+  memoryDb.categories = Array.from(
+    new Set([...SEED_CATEGORIES, ...(memoryDb.categories || [])])
+  );
+
   return memoryDb;
 }
 
@@ -245,6 +257,36 @@ export const db = {
         changed = true;
       }
     }
+    if (changed) {
+      await saveStore();
+    }
+  },
+
+  async syncCustomQuizzes(quizzes: Quiz[], questions: Question[] = []): Promise<void> {
+    const adminFb = getFirebaseAdmin();
+    if (adminFb) {
+      for (const q of quizzes) {
+        await this.createQuiz(q, questions.filter((item) => item.quizId === q.id));
+      }
+      return;
+    }
+
+    const store = await loadStore();
+    const deletedSet = new Set(store.deletedQuizIds || []);
+    let changed = false;
+
+    for (const q of quizzes) {
+      if (!q || !q.id || deletedSet.has(q.id)) continue;
+      store.quizzes[q.id] = q;
+      changed = true;
+    }
+
+    for (const qItem of questions) {
+      if (!qItem || !qItem.id || !qItem.quizId || deletedSet.has(qItem.quizId)) continue;
+      store.questions[qItem.id] = qItem;
+      changed = true;
+    }
+
     if (changed) {
       await saveStore();
     }

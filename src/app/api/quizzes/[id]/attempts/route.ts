@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getUserSession } from "@/lib/auth";
+import { getUserSession, getAdminSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { Attempt } from "@/lib/types";
 
@@ -10,14 +10,16 @@ export async function POST(
   try {
     const { id: quizId } = await params;
     const user = await getUserSession(req);
+    const admin = await getAdminSession(req);
+    const isAdmin = Boolean(admin && admin.role === "admin");
 
     // Fallback demo student if testing without explicit login
-    const userId = user?.uid || "candidate-" + Math.random().toString(36).substring(2, 8);
-    const userName = user?.displayName || "Candidate " + userId.substring(userId.length - 4);
-    const userEmail = user?.email || `${userId}@exam.candidate`;
+    const userId = user?.uid || (isAdmin ? "admin-tester" : "candidate-" + Math.random().toString(36).substring(2, 8));
+    const userName = user?.displayName || (isAdmin ? "Admin Examiner (Preview)" : "Candidate " + userId.substring(userId.length - 4));
+    const userEmail = user?.email || (isAdmin ? "admin@nta.ac.in" : `${userId}@exam.candidate`);
 
-    const quiz = await db.getQuiz(quizId);
-    if (!quiz || quiz.status !== "published") {
+    const quiz = await db.getQuiz(quizId, true);
+    if (!quiz || (quiz.status !== "published" && !isAdmin)) {
       return NextResponse.json({ error: "Examination is not available" }, { status: 404 });
     }
 

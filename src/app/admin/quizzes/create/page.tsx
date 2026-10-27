@@ -351,6 +351,23 @@ function CreateQuizContent() {
         throw new Error(parsed.error || "Failed to create quiz");
       }
 
+      // Persist custom quiz in browser storage as backup
+      try {
+        if (parsed.data?.quiz) {
+          const custom = JSON.parse(localStorage.getItem("nta_custom_quizzes") || "{}");
+          custom[parsed.data.quiz.id] = {
+            quiz: parsed.data.quiz,
+            questions: questions.map((q, idx) => ({
+              ...q,
+              id: `q-${parsed.data.quiz.id}-${idx + 1}`,
+              quizId: parsed.data.quiz.id,
+              order: idx + 1,
+            })),
+          };
+          localStorage.setItem("nta_custom_quizzes", JSON.stringify(custom));
+        }
+      } catch {}
+
       router.push("/admin/quizzes");
       router.refresh();
     } catch (err: any) {

@@ -63,7 +63,23 @@ export default function ExamLivePage({
         const url = `/api/quizzes/${quizId}/exam${
           attemptIdParam ? `?attemptId=${attemptIdParam}` : ""
         }`;
-        const res = await fetch(url);
+        let res = await fetch(url);
+
+        // Self-heal from local storage if needed on fresh serverless containers
+        if (!res.ok) {
+          try {
+            const customObj = JSON.parse(localStorage.getItem("nta_custom_quizzes") || "{}");
+            if (customObj[quizId]?.quiz) {
+              await fetch("/api/quizzes/sync-custom", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(customObj[quizId]),
+              });
+              res = await fetch(url);
+            }
+          } catch {}
+        }
+
         const data = await res.json();
 
         if (!res.ok) {

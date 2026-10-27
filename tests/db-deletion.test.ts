@@ -96,4 +96,56 @@ describe("Database Quiz Management & Deletion", () => {
     const list = await db.listQuizzes(true);
     expect(list.some((q) => q.id === syncQuizId)).toBe(false);
   });
+
+  it("always preserves seed quizzes and synchronizes custom quizzes across instances", async () => {
+    // Check that official seed quizzes exist
+    const seedQuiz = await db.getQuiz("quiz-banking-live-mock");
+    expect(seedQuiz).not.toBeNull();
+    expect(seedQuiz?.id).toBe("quiz-banking-live-mock");
+
+    // Sync a new custom quiz
+    const customQuizId = `quiz-custom-sync-${Date.now()}`;
+    const customQuiz: Quiz = {
+      id: customQuizId,
+      title: "Self-Healed Custom Paper",
+      subject: "Banking",
+      category: "Banking",
+      status: "published",
+      durationMinutes: 30,
+      totalQuestions: 1,
+      marksPerQuestion: 1,
+      negativeMarks: 0.25,
+      language: "English",
+      reviewPolicy: "immediate",
+      allowRandomization: true,
+      createdBy: "admin",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const customQuestions: Question[] = [
+      {
+        id: `q-${customQuizId}-1`,
+        quizId: customQuizId,
+        questionText: "What is the capital of India?",
+        options: ["Mumbai", "New Delhi", "Kolkata", "Chennai"],
+        correctAnswerIndex: 1,
+        difficulty: "easy",
+        topic: "General",
+        order: 1,
+      },
+    ];
+
+    await db.syncCustomQuizzes([customQuiz], customQuestions);
+
+    const fetchedCustom = await db.getQuiz(customQuizId);
+    expect(fetchedCustom).not.toBeNull();
+    expect(fetchedCustom?.title).toBe("Self-Healed Custom Paper");
+
+    const questions = await db.getQuizQuestions(customQuizId);
+    expect(questions.length).toBe(1);
+
+    // Clean up
+    await db.deleteQuiz(customQuizId);
+  });
 });

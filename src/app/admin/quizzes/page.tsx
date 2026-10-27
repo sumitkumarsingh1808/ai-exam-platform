@@ -64,6 +64,33 @@ export default function QuizManagementPage() {
         list = list.filter((q: Quiz) => !storedDeleted.includes(q.id));
       }
 
+      // Check for locally saved custom quizzes and sync if needed
+      try {
+        const customObj = JSON.parse(localStorage.getItem("nta_custom_quizzes") || "{}");
+        const customQuizzes = Object.values(customObj).map((item: any) => item?.quiz).filter(Boolean);
+        const missingOnServer: any[] = [];
+
+        for (const cq of customQuizzes) {
+          if (!storedDeleted.includes(cq.id)) {
+            if (!list.some((sq: any) => sq.id === cq.id)) {
+              list.push(cq);
+              missingOnServer.push(customObj[cq.id]);
+            }
+          }
+        }
+
+        // Background sync to server if any were missing on this server instance
+        if (missingOnServer.length > 0) {
+          for (const item of missingOnServer) {
+            fetch("/api/quizzes/sync-custom", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(item),
+            }).catch(() => {});
+          }
+        }
+      } catch {}
+
       setQuizzes(list);
       if (dataC.categories && Array.isArray(dataC.categories)) {
         setCategories(dataC.categories);
@@ -81,12 +108,35 @@ export default function QuizManagementPage() {
 
   const handleTogglePublish = async (id: string) => {
     try {
+      // Optimistically toggle state immediately in UI
+      setQuizzes((prev) =>
+        prev.map((q) =>
+          q.id === id
+            ? { ...q, status: q.status === "published" ? "draft" : "published" }
+            : q
+        )
+      );
+
+      // Update in localStorage custom quizzes
+      try {
+        const customObj = JSON.parse(localStorage.getItem("nta_custom_quizzes") || "{}");
+        if (customObj[id]?.quiz) {
+          customObj[id].quiz.status = customObj[id].quiz.status === "published" ? "draft" : "published";
+          localStorage.setItem("nta_custom_quizzes", JSON.stringify(customObj));
+        }
+      } catch {}
+
       const res = await fetch(`/api/admin/quizzes/${id}/publish`, { method: "POST" });
-      if (res.ok) {
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to toggle publish status on server");
+        loadQuizzes();
+      } else {
         loadQuizzes();
       }
-    } catch (err) {
-      alert("Failed to toggle publish status");
+    } catch (err: any) {
+      alert("Failed to toggle publish status: " + err.message);
+      loadQuizzes();
     }
   };
 

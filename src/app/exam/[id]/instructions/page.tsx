@@ -31,14 +31,39 @@ export default function ExamInstructionsPage({
   const [starting, setStarting] = useState(false);
 
   useEffect(() => {
-    // Fetch quiz metadata
-    fetch(`/api/quizzes/${quizId}`)
-      .then((res) => {
-        if (!res.ok) throw new Error("Examination paper not found");
-        return res.json();
-      })
-      .then((data) => setQuiz(data.quiz))
-      .catch((err) => setError(err.message));
+    async function loadQuizData() {
+      try {
+        let res = await fetch(`/api/quizzes/${quizId}`);
+
+        // If not found on this serverless instance, attempt self-healing from local storage
+        if (!res.ok) {
+          try {
+            const customObj = JSON.parse(localStorage.getItem("nta_custom_quizzes") || "{}");
+            if (customObj[quizId]?.quiz) {
+              await fetch("/api/quizzes/sync-custom", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(customObj[quizId]),
+              });
+              // Retry fetching after sync
+              res = await fetch(`/api/quizzes/${quizId}`);
+            }
+          } catch {}
+        }
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || "Examination paper not found");
+        }
+
+        const data = await res.json();
+        setQuiz(data.quiz);
+      } catch (err: any) {
+        setError(err.message || "Examination paper not found");
+      }
+    }
+
+    loadQuizData();
 
     // Fetch user info
     fetch("/api/me")
@@ -62,9 +87,24 @@ export default function ExamInstructionsPage({
     setStarting(true);
 
     try {
-      const res = await fetch(`/api/quizzes/${quizId}/attempts`, {
+      let res = await fetch(`/api/quizzes/${quizId}/attempts`, {
         method: "POST",
       });
+
+      // If attempt creation failed due to serverless cold-start, sync and retry
+      if (!res.ok) {
+        try {
+          const customObj = JSON.parse(localStorage.getItem("nta_custom_quizzes") || "{}");
+          if (customObj[quizId]?.quiz) {
+            await fetch("/api/quizzes/sync-custom", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(customObj[quizId]),
+            });
+            res = await fetch(`/api/quizzes/${quizId}/attempts`, { method: "POST" });
+          }
+        } catch {}
+      }
 
       const data = await res.json();
       if (!res.ok) {
